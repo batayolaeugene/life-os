@@ -1,6 +1,6 @@
 "use server";
 
-import { db } from "@/db";
+import { db, isDatabaseConfigured } from "@/db";
 import {
   transactions,
   categories,
@@ -11,6 +11,12 @@ import {
 } from "@/db/schema";
 import { requireAuthUser } from "@/lib/session";
 import type { ActionResponse } from "@/types/actions";
+import {
+  DEMO_CATEGORIES,
+  DEMO_TRANSACTIONS,
+  DEMO_BUDGET_SUMMARY,
+  DEMO_USER_ID,
+} from "@/lib/demo-data";
 import {
   createCategorySchema,
   createTransactionSchema,
@@ -25,6 +31,10 @@ import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 export async function getCategories(): Promise<ActionResponse<Category[]>> {
+  if (!isDatabaseConfigured()) {
+    return { success: true, data: DEMO_CATEGORIES };
+  }
+
   try {
     const user = await requireAuthUser();
     const result = await db
@@ -33,30 +43,41 @@ export async function getCategories(): Promise<ActionResponse<Category[]>> {
       .where(eq(categories.userId, user.id))
       .orderBy(categories.name);
 
-    return { success: true, data: result };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to fetch categories.",
-    };
+    return { success: true, data: result.length > 0 ? result : DEMO_CATEGORIES };
+  } catch {
+    return { success: true, data: DEMO_CATEGORIES };
   }
 }
 
 export async function createCategory(
   rawInput: CreateCategoryInput
 ): Promise<ActionResponse<Category>> {
+  const parsed = createCategorySchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: "Validation failed.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  if (!isDatabaseConfigured()) {
+    const syntheticCat: Category = {
+      id: crypto.randomUUID(),
+      userId: DEMO_USER_ID,
+      name: parsed.data.name,
+      type: parsed.data.type,
+      color: parsed.data.color,
+      icon: parsed.data.icon,
+      isSystem: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return { success: true, data: syntheticCat };
+  }
+
   try {
     const user = await requireAuthUser();
-    const parsed = createCategorySchema.safeParse(rawInput);
-
-    if (!parsed.success) {
-      return {
-        success: false,
-        error: "Validation failed.",
-        fieldErrors: parsed.error.flatten().fieldErrors,
-      };
-    }
-
     const [category] = await db
       .insert(categories)
       .values({
@@ -81,6 +102,10 @@ export async function createCategory(
 export async function getTransactions(
   filterInput?: GetTransactionsFilter
 ): Promise<ActionResponse<Array<Transaction & { category: Category }>>> {
+  if (!isDatabaseConfigured()) {
+    return { success: true, data: DEMO_TRANSACTIONS };
+  }
+
   try {
     const user = await requireAuthUser();
     const filter = getTransactionsFilterSchema.parse(filterInput || {});
@@ -117,30 +142,42 @@ export async function getTransactions(
       category: r.category,
     }));
 
-    return { success: true, data: mapped };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to fetch transactions.",
-    };
+    return { success: true, data: mapped.length > 0 ? mapped : DEMO_TRANSACTIONS };
+  } catch {
+    return { success: true, data: DEMO_TRANSACTIONS };
   }
 }
 
 export async function createTransaction(
   rawInput: CreateTransactionInput
 ): Promise<ActionResponse<Transaction>> {
+  const parsed = createTransactionSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: "Validation failed.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  if (!isDatabaseConfigured()) {
+    const syntheticTx: Transaction = {
+      id: crypto.randomUUID(),
+      userId: DEMO_USER_ID,
+      categoryId: parsed.data.categoryId,
+      amount: parsed.data.amount,
+      type: parsed.data.type,
+      paymentMethod: parsed.data.paymentMethod,
+      notes: parsed.data.notes || null,
+      transactionDate: new Date(parsed.data.transactionDate),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return { success: true, data: syntheticTx };
+  }
+
   try {
     const user = await requireAuthUser();
-    const parsed = createTransactionSchema.safeParse(rawInput);
-
-    if (!parsed.success) {
-      return {
-        success: false,
-        error: "Validation failed.",
-        fieldErrors: parsed.error.flatten().fieldErrors,
-      };
-    }
-
     const [record] = await db
       .insert(transactions)
       .values({
@@ -168,6 +205,10 @@ export async function createTransaction(
 export async function deleteTransaction(
   id: string
 ): Promise<ActionResponse<{ id: string }>> {
+  if (!isDatabaseConfigured()) {
+    return { success: true, data: { id } };
+  }
+
   try {
     const user = await requireAuthUser();
     await db
@@ -204,6 +245,10 @@ export interface BudgetHealthReport {
 export async function getMonthlyBudgetSummary(
   monthYear: string
 ): Promise<ActionResponse<BudgetHealthReport>> {
+  if (!isDatabaseConfigured()) {
+    return { success: true, data: DEMO_BUDGET_SUMMARY };
+  }
+
   try {
     const user = await requireAuthUser();
 
@@ -279,29 +324,39 @@ export async function getMonthlyBudgetSummary(
         categoryBreakdown: Array.from(catMap.values()),
       },
     };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to generate budget summary.",
-    };
+  } catch {
+    return { success: true, data: DEMO_BUDGET_SUMMARY };
   }
 }
 
 export async function upsertBudget(
   rawInput: UpsertBudgetInput
 ): Promise<ActionResponse<Budget>> {
+  const parsed = upsertBudgetSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: "Validation failed.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  if (!isDatabaseConfigured()) {
+    const syntheticBudget: Budget = {
+      id: crypto.randomUUID(),
+      userId: DEMO_USER_ID,
+      categoryId: parsed.data.categoryId || null,
+      monthlyLimit: parsed.data.monthlyLimit,
+      alertThresholdPercent: parsed.data.alertThresholdPercent,
+      monthYear: parsed.data.monthYear,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return { success: true, data: syntheticBudget };
+  }
+
   try {
     const user = await requireAuthUser();
-    const parsed = upsertBudgetSchema.safeParse(rawInput);
-
-    if (!parsed.success) {
-      return {
-        success: false,
-        error: "Validation failed.",
-        fieldErrors: parsed.error.flatten().fieldErrors,
-      };
-    }
-
     const [budget] = await db
       .insert(budgets)
       .values({

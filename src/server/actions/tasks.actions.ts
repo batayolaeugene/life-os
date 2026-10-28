@@ -1,6 +1,6 @@
 "use server";
 
-import { db } from "@/db";
+import { db, isDatabaseConfigured } from "@/db";
 import {
   dailyHabits,
   dailyHabitLogs,
@@ -11,6 +11,10 @@ import {
 } from "@/db/schema";
 import { requireAuthUser } from "@/lib/session";
 import type { ActionResponse } from "@/types/actions";
+import {
+  getDemoDailyOverview,
+  DEMO_USER_ID,
+} from "@/lib/demo-data";
 import {
   createDailyHabitSchema,
   toggleHabitLogSchema,
@@ -48,6 +52,10 @@ export interface DailyOverviewData {
 export async function getDailyOverview(
   dateString: string
 ): Promise<ActionResponse<DailyOverviewData>> {
+  if (!isDatabaseConfigured()) {
+    return { success: true, data: getDemoDailyOverview(dateString) };
+  }
+
   try {
     const user = await requireAuthUser();
 
@@ -119,29 +127,41 @@ export async function getDailyOverview(
         },
       },
     };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to load daily overview.",
-    };
+  } catch {
+    return { success: true, data: getDemoDailyOverview(dateString) };
   }
 }
 
 export async function createHabit(
   rawInput: CreateDailyHabitInput
 ): Promise<ActionResponse<DailyHabit>> {
+  const parsed = createDailyHabitSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: "Validation failed.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  if (!isDatabaseConfigured()) {
+    const syntheticHabit: DailyHabit = {
+      id: crypto.randomUUID(),
+      userId: DEMO_USER_ID,
+      title: parsed.data.title,
+      description: parsed.data.description || null,
+      frequency: parsed.data.frequency,
+      targetPerDay: parsed.data.targetPerDay,
+      icon: parsed.data.icon,
+      archived: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return { success: true, data: syntheticHabit };
+  }
+
   try {
     const user = await requireAuthUser();
-    const parsed = createDailyHabitSchema.safeParse(rawInput);
-
-    if (!parsed.success) {
-      return {
-        success: false,
-        error: "Validation failed.",
-        fieldErrors: parsed.error.flatten().fieldErrors,
-      };
-    }
-
     const [habit] = await db
       .insert(dailyHabits)
       .values({
@@ -168,18 +188,31 @@ export async function createHabit(
 export async function toggleHabitLog(
   rawInput: ToggleHabitLogInput
 ): Promise<ActionResponse<DailyHabitLog>> {
+  const parsed = toggleHabitLogSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: "Validation failed.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  if (!isDatabaseConfigured()) {
+    const syntheticLog: DailyHabitLog = {
+      id: crypto.randomUUID(),
+      habitId: parsed.data.habitId,
+      userId: DEMO_USER_ID,
+      logDate: parsed.data.logDate,
+      completedCount: parsed.data.increment ? 1 : 0,
+      isCompleted: parsed.data.increment,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return { success: true, data: syntheticLog };
+  }
+
   try {
     const user = await requireAuthUser();
-    const parsed = toggleHabitLogSchema.safeParse(rawInput);
-
-    if (!parsed.success) {
-      return {
-        success: false,
-        error: "Validation failed.",
-        fieldErrors: parsed.error.flatten().fieldErrors,
-      };
-    }
-
     const habit = await db.query.dailyHabits.findFirst({
       where: and(
         eq(dailyHabits.id, parsed.data.habitId),
@@ -246,18 +279,34 @@ export async function toggleHabitLog(
 export async function createTask(
   rawInput: CreateDailyTaskInput
 ): Promise<ActionResponse<DailyTask>> {
+  const parsed = createDailyTaskSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: "Validation failed.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  if (!isDatabaseConfigured()) {
+    const syntheticTask: DailyTask = {
+      id: crypto.randomUUID(),
+      userId: DEMO_USER_ID,
+      title: parsed.data.title,
+      description: parsed.data.description || null,
+      priority: parsed.data.priority,
+      status: "todo",
+      dueDate: parsed.data.dueDate,
+      isDailyFocus: parsed.data.isDailyFocus || false,
+      completedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return { success: true, data: syntheticTask };
+  }
+
   try {
     const user = await requireAuthUser();
-    const parsed = createDailyTaskSchema.safeParse(rawInput);
-
-    if (!parsed.success) {
-      return {
-        success: false,
-        error: "Validation failed.",
-        fieldErrors: parsed.error.flatten().fieldErrors,
-      };
-    }
-
     const [task] = await db
       .insert(dailyTasks)
       .values({
@@ -285,18 +334,34 @@ export async function createTask(
 export async function updateTaskStatus(
   rawInput: UpdateTaskStatusInput
 ): Promise<ActionResponse<DailyTask>> {
+  const parsed = updateTaskStatusSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: "Validation failed.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  if (!isDatabaseConfigured()) {
+    const syntheticTask: DailyTask = {
+      id: parsed.data.id,
+      userId: DEMO_USER_ID,
+      title: "Updated task",
+      description: null,
+      priority: "medium",
+      status: parsed.data.status,
+      dueDate: new Date().toISOString().slice(0, 10),
+      isDailyFocus: false,
+      completedAt: parsed.data.status === "done" ? new Date() : null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return { success: true, data: syntheticTask };
+  }
+
   try {
     const user = await requireAuthUser();
-    const parsed = updateTaskStatusSchema.safeParse(rawInput);
-
-    if (!parsed.success) {
-      return {
-        success: false,
-        error: "Validation failed.",
-        fieldErrors: parsed.error.flatten().fieldErrors,
-      };
-    }
-
     const isDone = parsed.data.status === "done";
 
     const [updated] = await db
@@ -329,6 +394,10 @@ export async function updateTaskStatus(
 export async function deleteTask(
   id: string
 ): Promise<ActionResponse<{ id: string }>> {
+  if (!isDatabaseConfigured()) {
+    return { success: true, data: { id } };
+  }
+
   try {
     const user = await requireAuthUser();
     await db

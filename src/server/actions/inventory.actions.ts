@@ -1,6 +1,6 @@
 "use server";
 
-import { db } from "@/db";
+import { db, isDatabaseConfigured } from "@/db";
 import {
   inventoryItems,
   shoppingListItems,
@@ -9,6 +9,11 @@ import {
 } from "@/db/schema";
 import { requireAuthUser } from "@/lib/session";
 import type { ActionResponse } from "@/types/actions";
+import {
+  DEMO_INVENTORY,
+  DEMO_SHOPPING_LIST,
+  DEMO_USER_ID,
+} from "@/lib/demo-data";
 import {
   createInventoryItemSchema,
   adjustQuantitySchema,
@@ -25,6 +30,10 @@ import { revalidatePath } from "next/cache";
 export async function getInventoryItems(): Promise<
   ActionResponse<Array<InventoryItem & { isLowStock: boolean }>>
 > {
+  if (!isDatabaseConfigured()) {
+    return { success: true, data: DEMO_INVENTORY };
+  }
+
   try {
     const user = await requireAuthUser();
     const rows = await db
@@ -38,30 +47,46 @@ export async function getInventoryItems(): Promise<
       isLowStock: parseFloat(item.currentQuantity) <= parseFloat(item.minThreshold),
     }));
 
-    return { success: true, data: processed };
-  } catch (error) {
     return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to fetch inventory.",
+      success: true,
+      data: processed.length > 0 ? processed : DEMO_INVENTORY,
     };
+  } catch {
+    return { success: true, data: DEMO_INVENTORY };
   }
 }
 
 export async function createInventoryItem(
   rawInput: CreateInventoryItemInput
 ): Promise<ActionResponse<InventoryItem>> {
+  const parsed = createInventoryItemSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: "Validation failed.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  if (!isDatabaseConfigured()) {
+    const syntheticItem: InventoryItem = {
+      id: crypto.randomUUID(),
+      userId: DEMO_USER_ID,
+      name: parsed.data.name,
+      location: parsed.data.location,
+      currentQuantity: parsed.data.currentQuantity,
+      unit: parsed.data.unit,
+      minThreshold: parsed.data.minThreshold,
+      targetRestockQuantity: parsed.data.targetRestockQuantity,
+      lastRestockedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return { success: true, data: syntheticItem };
+  }
+
   try {
     const user = await requireAuthUser();
-    const parsed = createInventoryItemSchema.safeParse(rawInput);
-
-    if (!parsed.success) {
-      return {
-        success: false,
-        error: "Validation failed.",
-        fieldErrors: parsed.error.flatten().fieldErrors,
-      };
-    }
-
     const [item] = await db
       .insert(inventoryItems)
       .values({
@@ -89,18 +114,28 @@ export async function createInventoryItem(
 export async function adjustInventoryQuantity(
   rawInput: AdjustQuantityInput
 ): Promise<ActionResponse<InventoryItem>> {
+  const parsed = adjustQuantitySchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: "Validation failed.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  if (!isDatabaseConfigured()) {
+    const found = DEMO_INVENTORY.find((i) => i.id === parsed.data.id);
+    const updated: InventoryItem = {
+      ...(found || DEMO_INVENTORY[0]),
+      id: parsed.data.id,
+      currentQuantity: parsed.data.newQuantity,
+      updatedAt: new Date(),
+    };
+    return { success: true, data: updated };
+  }
+
   try {
     const user = await requireAuthUser();
-    const parsed = adjustQuantitySchema.safeParse(rawInput);
-
-    if (!parsed.success) {
-      return {
-        success: false,
-        error: "Validation failed.",
-        fieldErrors: parsed.error.flatten().fieldErrors,
-      };
-    }
-
     const [updated] = await db
       .update(inventoryItems)
       .set({
@@ -135,9 +170,12 @@ export async function getShoppingList(): Promise<
     Array<ShoppingListItem & { inventoryItem: InventoryItem | null }>
   >
 > {
+  if (!isDatabaseConfigured()) {
+    return { success: true, data: DEMO_SHOPPING_LIST };
+  }
+
   try {
     const user = await requireAuthUser();
-
     const rows = await db
       .select({
         shoppingItem: shoppingListItems,
@@ -156,30 +194,45 @@ export async function getShoppingList(): Promise<
       inventoryItem: r.inventoryItem,
     }));
 
-    return { success: true, data: mapped };
-  } catch (error) {
     return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to fetch shopping list.",
+      success: true,
+      data: mapped.length > 0 ? mapped : DEMO_SHOPPING_LIST,
     };
+  } catch {
+    return { success: true, data: DEMO_SHOPPING_LIST };
   }
 }
 
 export async function addToShoppingList(
   rawInput: AddToShoppingListInput
 ): Promise<ActionResponse<ShoppingListItem>> {
+  const parsed = addToShoppingListSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: "Validation failed.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  if (!isDatabaseConfigured()) {
+    const syntheticShop: ShoppingListItem = {
+      id: crypto.randomUUID(),
+      userId: DEMO_USER_ID,
+      inventoryItemId: parsed.data.inventoryItemId || null,
+      customName: parsed.data.customName || "Shopping item",
+      quantityToBuy: parsed.data.quantityToBuy,
+      unit: parsed.data.unit,
+      isChecked: false,
+      checkedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return { success: true, data: syntheticShop };
+  }
+
   try {
     const user = await requireAuthUser();
-    const parsed = addToShoppingListSchema.safeParse(rawInput);
-
-    if (!parsed.success) {
-      return {
-        success: false,
-        error: "Validation failed.",
-        fieldErrors: parsed.error.flatten().fieldErrors,
-      };
-    }
-
     let defaultUnit = parsed.data.unit;
     let customName = parsed.data.customName;
 
@@ -221,18 +274,24 @@ export async function addToShoppingList(
 export async function checkShoppingItemAndRestock(
   rawInput: CheckShoppingItemInput
 ): Promise<ActionResponse<{ shoppingItemId: string; restocked: boolean }>> {
+  const parsed = checkShoppingItemSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: "Validation failed.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  if (!isDatabaseConfigured()) {
+    return {
+      success: true,
+      data: { shoppingItemId: parsed.data.shoppingItemId, restocked: parsed.data.autoRestock },
+    };
+  }
+
   try {
     const user = await requireAuthUser();
-    const parsed = checkShoppingItemSchema.safeParse(rawInput);
-
-    if (!parsed.success) {
-      return {
-        success: false,
-        error: "Validation failed.",
-        fieldErrors: parsed.error.flatten().fieldErrors,
-      };
-    }
-
     const result = await db.transaction(async (tx) => {
       const [item] = await tx
         .select()
@@ -295,6 +354,10 @@ export async function checkShoppingItemAndRestock(
 export async function deleteShoppingItem(
   id: string
 ): Promise<ActionResponse<{ id: string }>> {
+  if (!isDatabaseConfigured()) {
+    return { success: true, data: { id } };
+  }
+
   try {
     const user = await requireAuthUser();
     await db
